@@ -1,0 +1,57 @@
+// Development-only tests: node scripts/test-scoring.cjs
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const Module = require('node:module');
+const ts = require('typescript');
+const filename = path.resolve(__dirname, '../services/game.ts');
+const compiled = ts.transpileModule(fs.readFileSync(filename,'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText;
+const mod = new Module(filename, module);
+mod.filename = filename;
+mod.paths = module.paths;
+mod._compile(compiled, filename);
+const {roundPoints,newGame,finishRound,prepareNext,leaders} = mod.exports;
+assert.equal(roundPoints(9,false,null),12);
+assert.equal(roundPoints(9,false,'plus'),14);
+assert.equal(roundPoints(9,false,'double'),24);
+assert.equal(roundPoints(3,true,null),-2);
+assert.equal(roundPoints(3,true,'plus'),0);
+assert.equal(roundPoints(3,true,'double'),1);
+assert.equal(roundPoints(0,true,'double'),-5);
+const setup={names:['A','B'],rounds:5,mode:'classic',language:'en',categories:['general'],packs:['base']};
+let game=newGame(setup,60);
+game={...game,phase:'question',found:['a','b','c']};
+game=finishRound(game,false);
+assert.equal(game.teams[0].score,3);
+assert.strictEqual(finishRound(game,false),game,'Result cannot be scored twice');
+game={...game,phase:'scoreboard'};
+game=prepareNext(game);
+assert.equal(game.active,1);
+assert.equal(game.turn,2);
+let streak=newGame({...setup,mode:'streak'},60);
+streak=finishRound({...streak,phase:'question',found:['1','2','3','4','5']},false);
+assert.equal(streak.teams[0].streak,1);
+streak=prepareNext({...streak,phase:'scoreboard'});
+assert.equal(streak.active,0,'A successful streak keeps its turn');
+streak=finishRound({...streak,phase:'question',found:[]},false);
+assert.equal(streak.teams[0].eliminated,true);
+streak=prepareNext({...streak,phase:'scoreboard'});
+assert.equal(streak.phase,'final');
+assert.deepEqual(streak.winnerIds,['team-1']);
+let tie=newGame(setup,60);
+tie=prepareNext({...tie,turn:5,phase:'scoreboard'});
+assert.equal(tie.suddenDeath,true);
+assert.deepEqual(tie.tieTeams,['team-0','team-1']);
+tie={...tie,tieScores:{'team-0':3,'team-1':2},tiePlayed:['team-0','team-1'],phase:'scoreboard'};
+assert.deepEqual(leaders(tie),['team-0']);
+assert.equal(prepareNext(tie).phase,'final');
+const {buildQuestions}=require('../data/buildQuestions');
+const banks=require('../data/banks.json');
+for(const lang of ['en','fr','ar']) {
+  const questions=buildQuestions(banks,lang);
+  assert.equal(questions.length,180);
+  assert.equal(new Set(questions.map(q=>q.id)).size,180);
+  assert.equal(new Set(questions.map(q=>q.question)).size,180);
+  for(const q of questions) { assert.equal(q.answers.length,9); assert.equal(new Set(q.answers).size,9); assert.ok(q.bomb===null||!q.answers.includes(q.bomb)); }
+}
+console.log('Scoring, streak, Classic rotation, tie-break, idempotency and content tests passed.');
